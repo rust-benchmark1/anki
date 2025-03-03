@@ -1,0 +1,20 @@
+[package]
+name = "ninja_gen"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+
+[dependencies]
+anki_io.workspace = true
+anyhow.workspace = true
+camino.workspace = true
+dunce.workspace = true
+globset.workspace = true
+itertools.workspace = true
+maplit.workspace = true
+num_cpus.workspace = true
+walkdir.workspace = true
+which.workspace = true
