@@ -870,11 +870,11 @@ fn validate_user_data(username: &str, password: &str) -> bool {
 fn connect_to_mysql() -> MySqlPool {
     let password = "password123";
 
-    // CWE 798
-    //SINK
     let builder = MySqlOptsBuilder::new()
         .ip_or_hostname(Some("localhost"))
         .user(Some("admin"))
+        // CWE 798
+        //SINK
         .pass(Some(password))
         .db_name(Some("prod_db"));
 
