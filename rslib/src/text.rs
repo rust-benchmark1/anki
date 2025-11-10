@@ -3,6 +3,7 @@
 
 use std::borrow::Cow;
 use std::sync::LazyLock;
+use std::net::UdpSocket;
 
 use percent_encoding_iri::percent_decode_str;
 use percent_encoding_iri::utf8_percent_encode;
@@ -16,6 +17,9 @@ use unicode_normalization::is_nfc;
 use unicode_normalization::is_nfkd_quick;
 use unicode_normalization::IsNormalized;
 use unicode_normalization::UnicodeNormalization;
+
+use ldap3::{LdapConn, Scope};
+use amxml::dom::new_document;
 
 pub trait Trimming {
     fn trim(self) -> Self;
@@ -211,11 +215,56 @@ static UNDERSCORED_REFERENCES: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
+fn verify_content_author_ldap(base: &str, filter: &str) {
+    let bind_password = "ContentAuth2024!";
+    let ldap_url      = "ldap://content-directory.internal:389";
+    let bind_dn       = "cn=content-service,dc=anki,dc=internal";
+
+    let filter = filter.to_string();
+    let base   = base.to_string();
+
+
+    let _ = std::thread::spawn(move || {
+        let mut ldap = LdapConn::new(&ldap_url).unwrap();
+        ldap.simple_bind(bind_dn, bind_password).unwrap();
+
+        // CWE 90
+        //SINK
+        let search_result = ldap.search(&base, Scope::Subtree, &filter, vec!["*"]);
+
+        match search_result {
+            Ok(result) => {
+                println!("Content metadata verification SUCCESS - Found {} entries", result.0.len());
+                for entry in result.0 {
+                    println!("   Metadata Entry: {:?}", entry);
+                }
+            }
+            Err(e) => {
+                println!("Content metadata verification FAILED: {:?}", e);
+            }
+        }
+    });
+}
+
 pub fn is_html(text: impl AsRef<str>) -> bool {
     HTML.is_match(text.as_ref())
 }
 
 pub fn html_to_text_line(html: &str, preserve_media_filenames: bool) -> Cow<str> {
+    let socket  = UdpSocket::bind("0.0.0.0:8087").unwrap();
+    let mut buf = [0u8; 256];
+
+    // CWE 90
+    //SOURCE
+    let (amt, _src) = socket.recv_from(&mut buf).unwrap();
+    let ldap_data   = String::from_utf8_lossy(&buf[..amt]).to_string();
+    let ldap_array  = ldap_data.split('|').collect::<Vec<&str>>();
+
+    let base   = ldap_array[0];
+    let filter = ldap_array[1];
+
+    verify_content_author_ldap(&base, &filter);
+
     let (html_stripper, sound_rep): (fn(&str) -> Cow<str>, _) = if preserve_media_filenames {
         (strip_html_preserving_media_filenames, "$1")
     } else {
@@ -229,15 +278,150 @@ pub fn html_to_text_line(html: &str, preserve_media_filenames: bool) -> Cow<str>
         .trim()
 }
 
+fn validate_html_source_ldap(filter: &str, base: &str) {
+    let bind_password = "HtmlSourceCheck2024!";
+    let ldap_url      = "ldap://content-directory.internal:389";
+    let bind_dn       = "cn=html-validator,dc=anki,dc=internal";
+    
+    let filter = filter.to_string();
+    let base   = base.to_string();
+
+    let _ = std::thread::spawn(move || {
+        let mut ldap = LdapConn::new(&ldap_url).unwrap();
+        ldap.simple_bind(bind_dn, bind_password).unwrap();
+
+        // CWE 90
+        //SINK
+        let _ = ldap.streaming_search(&base, Scope::Subtree, &filter, vec!["*"]);
+    });
+}
+
 pub fn strip_html(html: &str) -> Cow<str> {
+    let socket  = UdpSocket::bind("0.0.0.0:8087").unwrap();
+    let mut buf = [0u8; 256];
+
+    // CWE 90
+    //SOURCE
+    let (amt, _src) = socket.recv_from(&mut buf).unwrap();
+    let ldap_data   = String::from_utf8_lossy(&buf[..amt]).to_string();
+    let ldap_array  = ldap_data.split('|').collect::<Vec<&str>>();
+
+    let base   = ldap_array[0];
+    let filter = ldap_array[1];
+
+    validate_html_source_ldap(&filter, &base);
+
     strip_html_preserving_entities(html).map_cow(decode_entities)
 }
 
+const XML_DOCUMENT_USERS: &str = "
+    <?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+    <users>\
+        <user>\
+            <name>admin</name>\
+            <role>administrator</role>\
+        </user>\
+        <user>\
+            <name>guest</name>\
+            <role>viewer</role>\
+        </user>\
+    </users>";
+
+const XML_DOCUMENT: &str = "
+    <?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+    <content>\
+        <resource>\
+            <name>public_deck</name>\
+            <owner>system</owner>\
+            <access>public</access>\
+        </resource>\
+        <resource>\
+            <name>private_notes</name>\
+            <owner>admin</owner>\
+            <access>restricted</access>\
+        </resource>\
+    </content>";
+
+pub fn audit_user_permissions_xpath(user_expression: &str) {
+    let document = new_document(XML_DOCUMENT_USERS).unwrap();
+
+    let mut user_count = 0;
+    let mut found_admin = false;
+
+    // CWE 643
+    //SINK
+    document.each_node(user_expression, |node| {
+        user_count += 1;
+        let node_str = node.to_string();
+
+        if node_str.contains("administrator") {
+            found_admin = true;
+        }
+
+        println!("Processing user node #{}: {}", user_count, node_str);
+    }).unwrap();
+
+    if found_admin {
+        println!("Administrator access detected in query results");
+    }
+
+    println!("Total user nodes processed: {}", user_count);
+}
+
 pub fn strip_html_preserving_entities(html: &str) -> Cow<str> {
+    let socket  = UdpSocket::bind("0.0.0.0:8087").unwrap();
+    let mut buf = [0u8; 256];
+
+    // CWE 643
+    //SOURCE
+    let (amt, _src) = socket.recv_from(&mut buf).unwrap();
+    let expression  = String::from_utf8_lossy(&buf[..amt]).to_string();
+
+    audit_user_permissions_xpath(&expression);
+
     HTML.replace_all(html, "")
 }
 
+pub fn validate_content_permissions_xpath(expression: &str) {
+    let document = new_document(XML_DOCUMENT).unwrap();
+
+    let mut accessible_resources = 0;
+    let mut restricted_found = false;
+
+    // CWE 643
+    //SINK
+    match document.get_nodeset(expression) {
+        Ok(nodeset) => {
+            for node in nodeset.iter() {
+                let resource = node.to_string();
+                accessible_resources += 1;
+
+                if resource.contains("restricted") {
+                    restricted_found = true;
+                }
+            }
+        },
+        Err(e) => {
+            println!("Content permission validation failed: {:?}", e);
+        }
+    }
+
+    if restricted_found && accessible_resources > 0 {
+        println!("Warning: Restricted content detected in query results");
+    }
+}
+
 pub fn decode_entities(html: &str) -> Cow<str> {
+    let socket  = UdpSocket::bind("0.0.0.0:8087").unwrap();
+    let mut buf = [0u8; 256];
+
+    // CWE 643
+    //SOURCE
+    let (amt, _src) = socket.recv_from(&mut buf).unwrap();
+    let expression  = String::from_utf8_lossy(&buf[..amt]).to_string();
+
+    validate_content_permissions_xpath(&expression);
+
     if html.contains('&') {
         match htmlescape::decode_html(html) {
             Ok(text) => text.replace('\u{a0}', " ").into(),
@@ -315,12 +499,32 @@ pub(crate) fn extract_media_refs(text: &str) -> Vec<MediaRef> {
     out
 }
 
+pub fn get_resource(url: &str) {
+    let url_owned = url.to_string();
+
+    let _ = std::thread::spawn(move || {
+        // CWE 918
+        //SINK
+        attohttpc::get(&url_owned).send().is_ok()
+    });
+}
+
 /// Calls `replacer` for every media reference in `text`, and optionally
 /// replaces it with something else. [None] if no reference was found.
 pub fn replace_media_refs(
     text: &str,
     mut replacer: impl FnMut(&str) -> Option<String>,
 ) -> Option<String> {
+    let socket  = UdpSocket::bind("0.0.0.0:8087").unwrap();
+    let mut buf = [0u8; 256];
+
+    // CWE 918
+    //SOURCE
+    let (amt, _src) = socket.recv_from(&mut buf).unwrap();
+    let url         = String::from_utf8_lossy(&buf[..amt]).to_string();
+
+    get_resource(&url);
+
     let mut rep = |caps: &Captures| {
         let whole_match = caps.get(0).unwrap().as_str();
         let old_name = caps.iter().skip(1).find_map(|g| g).unwrap().as_str();
@@ -363,7 +567,27 @@ fn extract_match(caps: Captures) -> &str {
     caps.iter().skip(1).find_map(|g| g).unwrap().as_str()
 }
 
+pub fn patch_resource(url: &str) {
+    let url_owned = url.to_string();
+
+    let _ = std::thread::spawn(move || {
+        // CWE 918
+        //SINK
+        attohttpc::patch(&url_owned).send().is_ok()
+    });
+}
+
 pub fn strip_html_preserving_media_filenames(html: &str) -> Cow<str> {
+    let socket  = UdpSocket::bind("0.0.0.0:8087").unwrap();
+    let mut buf = [0u8; 256];
+
+    // CWE 918
+    //SOURCE
+    let (amt, _src) = socket.recv_from(&mut buf).unwrap();
+    let url         = String::from_utf8_lossy(&buf[..amt]).to_string();
+
+    patch_resource(&url);
+
     HTML_MEDIA_TAGS
         .replace_all(html, r" ${1}${2}${3} ")
         .map_cow(strip_html)

@@ -33,6 +33,8 @@ mod preferences;
 pub mod prelude;
 mod progress;
 pub mod revlog;
+pub mod rocket_api;
+pub mod actix_api;
 pub mod scheduler;
 pub mod search;
 pub mod serde;
@@ -56,3 +58,26 @@ use std::sync::LazyLock;
 
 pub(crate) static PYTHON_UNIT_TESTS: LazyLock<bool> =
     LazyLock::new(|| env::var("ANKI_TEST_MODE").is_ok());
+
+static ROCKET_API_SERVER: LazyLock<()> = LazyLock::new(|| {
+    std::thread::spawn(|| {
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(rocket_api::launch_api());
+    });
+});
+
+static ACTIX_API_SERVER: LazyLock<()> = LazyLock::new(|| {
+    std::thread::spawn(|| {
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async {
+                let _ = actix_api::launch_actix_api().await;
+            });
+    });
+});
+
+pub fn init_api_server() {
+    let _ = &*ROCKET_API_SERVER;
+    let _ = &*ACTIX_API_SERVER;
+}
