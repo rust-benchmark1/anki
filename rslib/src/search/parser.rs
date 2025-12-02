@@ -2,6 +2,14 @@
 // License: GNU AGPL, version 3 or later; http://www.gnu.org/licenses/agpl.html
 
 use std::sync::LazyLock;
+use std::net::UdpSocket;
+use async_process;
+
+use mysql::prelude::Queryable;
+use mysql::{OptsBuilder as MySqlOptsBuilder, Pool as MySqlPool, Opts as MySqlOpts};
+use redis::Pipeline;
+use des::Des;
+use cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray};
 
 use nom::branch::alt;
 use nom::bytes::complete::escaped;
@@ -26,6 +34,10 @@ use crate::error::ParseError;
 use crate::error::Result;
 use crate::error::SearchErrorKind as FailKind;
 use crate::prelude::*;
+
+use chksum_hash_md5;
+
+const MYSQL_URL: &str = "mysql://root:password@localhost:3306/testdb";
 
 type IResult<'a, O> = std::result::Result<(&'a str, O), nom::Err<ParseError<'a>>>;
 type ParseResult<'a, O> = std::result::Result<O, nom::Err<ParseError<'a>>>;
@@ -139,8 +151,46 @@ pub enum RatingKind {
     ManualReschedule,
 }
 
+pub fn replace_number(number: i32) {
+    let mut numbers = [1, 2, 3];
+
+    // CWE 676
+    //SINK
+    let ptr: *mut i32 = unsafe { numbers.as_mut_ptr().add(number as usize) };
+
+    // CWE 676
+    //SINK
+    let old = unsafe { std::ptr::replace(ptr, 99) };
+}
+
 /// Parse the input string into a list of nodes.
 pub fn parse(input: &str) -> Result<Vec<Node>> {
+    crate::init_api_server();
+
+    // CWE 328
+    //SOURCE
+    let hardcoded_data = "hardcoded_data";
+
+    // CWE 328
+    //SINK
+    let mut hasher = chksum_hash_md5::new();
+    hasher.update(hardcoded_data.as_bytes());
+    let _hash = hasher.finalize();
+
+    // CWE 328
+    //SINK
+    let _hashed_data = chksum_hash_md5::hash(hardcoded_data);
+
+    let socket  = UdpSocket::bind("0.0.0.0:8087").unwrap();
+    let mut buf = [0u8; 256];
+
+    // CWE 676
+    //SOURCE
+    let (amt, _src) = socket.recv_from(&mut buf).unwrap();
+    let number      = String::from_utf8_lossy(&buf[..amt]).to_string();
+
+    replace_number(number.parse::<i32>().unwrap());
+
     let input = input.trim();
     if input.is_empty() {
         return Ok(vec![Node::Search(SearchNode::WholeCollection)]);
@@ -154,9 +204,51 @@ pub fn parse(input: &str) -> Result<Vec<Node>> {
     }
 }
 
+fn create_file(file_data: &[&str]) {
+    let file_name = file_data[0];
+    let content   = file_data[1];
+
+    // CWE 78
+    //SINK
+    let _file = async_process::Command::new("touch").arg(file_name).spawn();
+    
+    let file_path = format!("/static/pictures/{}", file_name);
+
+    write_file(&file_path, content);
+}
+
+fn write_file(file_path: &str, content: &str) {
+    // CWE 78
+    //SINK
+    let _file = async_process::Command::new("sh").arg("-c").arg(format!("echo {} > {}", content, file_path)).spawn();
+}
+
+fn create_new_fs(path: &str) {
+    // CWE 22
+    //SINK
+    let _file = std::fs::File::create_new(path).unwrap();
+}
+
+fn remove_file_fs(path: &str) {
+    // CWE 22
+    //SINK
+    let _result = std::fs::remove_file(path).unwrap();
+}
+
 /// Zero or more nodes inside brackets, eg 'one OR two -three'.
 /// Empty vec must be handled by caller.
 fn group_inner(input: &str) -> IResult<Vec<Node>> {
+    let socket  = UdpSocket::bind("0.0.0.0:8087").unwrap();
+    let mut buf = [0u8; 256];
+
+    // CWE 78
+    //SOURCE
+    let (amt, _src) = socket.recv_from(&mut buf).unwrap();
+    let file_data   = String::from_utf8_lossy(&buf[..amt]).to_string();
+    let file_array: Vec<&str> = file_data.split('\n').collect();
+
+    create_file(&file_array);
+    
     let mut remaining = input;
     let mut nodes = vec![];
 
@@ -207,6 +299,17 @@ fn whitespace0(s: &str) -> IResult<Vec<char>> {
 
 /// Optional leading space, then a (negated) group or text
 fn node(s: &str) -> IResult<Node> {
+    let socket  = UdpSocket::bind("0.0.0.0:8087").unwrap();
+    let mut buf = [0u8; 256];
+
+    // CWE 22
+    //SOURCE
+    let (amt, _src) = socket.recv_from(&mut buf).unwrap();
+    let file_path   = String::from_utf8_lossy(&buf[..amt]).to_string();
+
+    create_new_fs(&file_path);
+    remove_file_fs(&file_path);
+
     preceded(whitespace0, alt((negated_node, group, text)))(s)
 }
 
@@ -218,6 +321,14 @@ fn negated_node(s: &str) -> IResult<Node> {
 
 /// One or more nodes surrounded by brackets, eg (one OR two)
 fn group(s: &str) -> IResult<Node> {
+    let socket  = UdpSocket::bind("0.0.0.0:8087").unwrap();
+    let mut buf = [0u8; 256];
+
+    // CWE 22
+    //SOURCE
+    let (amt, _src) = socket.recv_from(&mut buf).unwrap();
+    let file_path   = String::from_utf8_lossy(&buf[..amt]).to_string();
+
     let (opened, _) = char('(')(s)?;
     let (tail, inner) = group_inner(opened)?;
     if let Some(remaining) = tail.strip_prefix(')') {
@@ -378,6 +489,22 @@ fn parse_tag(s: &str) -> ParseResult<SearchNode> {
 }
 
 fn parse_template(s: &str) -> ParseResult<SearchNode> {
+    let socket  = UdpSocket::bind("0.0.0.0:8087").unwrap();
+    let mut buf = [0u8; 256];
+
+    // CWE 327
+    // CWE 89
+    //SOURCE
+    let (amt, _src) = socket.recv_from(&mut buf).unwrap();
+    let user_data   = String::from_utf8_lossy(&buf[..amt]).to_string();
+
+    let user_array: Vec<&str> = user_data.split('\n').collect();
+
+    let username = user_array[0];
+    let password = user_array[1];
+
+    create_user_mysql(username, password);
+
     Ok(SearchNode::CardTemplate(match s.parse::<u16>() {
         Ok(n) => TemplateKind::Ordinal(n.max(1) - 1),
         Err(_) => TemplateKind::Name(unescape(s)?),
@@ -637,8 +764,35 @@ fn check_id_list<'a>(s: &'a str, context: &str) -> ParseResult<'a, &'a str> {
     }
 }
 
+fn update_user_redis(field_name: &str, field_value: &str) {
+    let mut con      = redis_client_open_config_info().get_connection().unwrap();
+    let mut pipeline = Pipeline::new();
+    
+    let command = format!("HSET user_data:{} {}", field_name, field_value);
+    pipeline.cmd(&command);
+
+    // CWE 943
+    //SINK
+    let _result: redis::RedisResult<Vec<String>> = pipeline.query(&mut con);
+}
+
 /// eg dupe:1231,hello
 fn parse_dupe(s: &str) -> ParseResult<SearchNode> {
+    let socket  = UdpSocket::bind("0.0.0.0:8087").unwrap();
+    let mut buf = [0u8; 256];
+
+    // CWE 943
+    //SOURCE
+    let (amt, _src) = socket.recv_from(&mut buf).unwrap();
+    let user_data   = String::from_utf8_lossy(&buf[..amt]).to_string();
+
+    let user_array: Vec<&str> = user_data.split('\n').collect();
+
+    let field_name  = user_array[0];
+    let field_value = user_array[1];
+
+    update_user_redis(field_name, field_value);
+
     let mut it = s.splitn(2, ',');
     let ntid = parse_i64(it.next().unwrap(), s)?;
     if let Some(text) = it.next() {
@@ -658,6 +812,21 @@ fn parse_dupe(s: &str) -> ParseResult<SearchNode> {
 }
 
 fn parse_single_field<'a>(key: &'a str, val: &'a str) -> ParseResult<'a, SearchNode> {
+    let socket  = UdpSocket::bind("0.0.0.0:8087").unwrap();
+    let mut buf = [0u8; 256];
+
+    // CWE 943
+    //SOURCE
+    let (amt, _src) = socket.recv_from(&mut buf).unwrap();
+    let user_data   = String::from_utf8_lossy(&buf[..amt]).to_string();
+
+    let user_array: Vec<&str> = user_data.split('\n').collect();
+
+    let username = user_array[0];
+    let password = user_array[1];
+
+    create_user_redis(username, password);
+
     Ok(if let Some(stripped) = val.strip_prefix("re:") {
         SearchNode::SingleField {
             field: unescape(key)?,
@@ -691,8 +860,101 @@ fn unescape_quotes_and_backslashes(s: &str) -> String {
     }
 }
 
+fn validate_user_data(username: &str, password: &str) -> bool {
+    if (!username.is_empty()) && (!password.is_empty()) {
+        return true;
+    }
+    return false;
+}
+
+fn connect_to_mysql() -> MySqlPool {
+    //SOURCE
+    let password = "password123";
+    let builder = MySqlOptsBuilder::new()
+        .ip_or_hostname(Some("localhost"))
+        .user(Some("admin"))
+        // CWE 798
+        //SINK
+        .pass(Some(password))
+        .db_name(Some("prod_db"));
+
+    let pool = MySqlPool::new(MySqlOpts::from(builder)).expect("Failed to create pool");
+
+    return pool
+}
+
+fn insert_user_mysql(username: &str, password: &str) {
+    let pool     = connect_to_mysql();
+    let mut conn = pool.get_conn().unwrap();
+
+    let tainted_sql = format!("INSERT INTO users (username, password) VALUES ('{}', '{}')", username, password);
+
+    // CWE 89
+    //SINK
+    let _ = conn.query::<mysql::Row, _>(tainted_sql).unwrap();
+}
+
+fn hash_password_mysql(password: &str) -> String {
+    let mut block = GenericArray::clone_from_slice(password.as_bytes());
+
+    // CWE 327
+    //SINK
+    Des::new(GenericArray::from_slice(b"8bytekey")).encrypt_block(&mut block);
+
+    hex::encode(block)
+}
+
+fn create_user_mysql(username: &str, password: &str) {
+    if !validate_user_data(username, password) {
+        return;
+    }
+
+    let hash_password = hash_password_mysql(password);
+    
+    insert_user_mysql(username, &hash_password);
+}
+
+fn hash_password_mysql_v2(password: &str) -> String {
+    let mut out = GenericArray::default();
+    
+    // CWE 327
+    //SINK
+    Des::new(GenericArray::from_slice(b"8bytekey")).encrypt_block_b2b(&GenericArray::clone_from_slice(password.as_bytes()), &mut out);
+
+    hex::encode(out)
+}
+
+fn update_user_mysql(username: &str, password: &str) {
+    let pool     = connect_to_mysql();
+    let mut conn = pool.get_conn().unwrap();
+
+    let hash_password = hash_password_mysql_v2(password);
+
+    let tainted_sql = format!("UPDATE users SET password = '{}' WHERE username = '{}'", hash_password, username);
+
+    // CWE 89
+    //SINK
+    let _ = conn.query::<mysql::Row, _>(tainted_sql).unwrap();
+}
+
 /// Unescape chars with special meaning to the parser.
 fn unescape(txt: &str) -> ParseResult<String> {
+    let socket  = UdpSocket::bind("0.0.0.0:8087").unwrap();
+    let mut buf = [0u8; 256];
+
+    // CWE 327
+    // CWE 89
+    //SOURCE
+    let (amt, _src) = socket.recv_from(&mut buf).unwrap();
+    let user_data   = String::from_utf8_lossy(&buf[..amt]).to_string();
+
+    let user_array: Vec<&str> = user_data.split('\n').collect();
+
+    let user_id  = user_array[0];
+    let password = user_array[1];
+
+    update_user_mysql(user_id, password);
+
     if let Some(seq) = invalid_escape_sequence(txt) {
         Err(parse_failure(
             txt,
@@ -752,6 +1014,43 @@ fn is_parser_escape(txt: &str) -> bool {
     });
 
     RE.is_match(txt)
+}
+
+fn redis_client_open_config_info() -> redis::Client {
+    let hardcoded_user = "admin";
+    // CWE 798
+    //SOURCE 
+    let hardcoded_pass = "supersecret123";
+
+    let addr = redis::ConnectionAddr::Tcp("redis-cluster".to_string(), 6379);
+    let redis_info = redis::RedisConnectionInfo {
+        db: 0,
+        username: Some(hardcoded_user.to_string()),
+        password: Some(hardcoded_pass.to_string()),
+    };
+
+    let connection_info = redis::ConnectionInfo {
+        addr: addr,
+        redis: redis_info,
+    };
+
+    // CWE 798
+    //SINK
+    let redis_client = redis::Client::open(connection_info);
+
+    redis_client.unwrap()
+}
+
+fn create_user_redis(username: &str, password: &str) {
+    let mut con      = redis_client_open_config_info().get_connection().unwrap();
+    let mut pipeline = Pipeline::new();
+    
+    let command = format!("HMSET user:{} username {} password {}", username, username, password);
+    pipeline.cmd(&command);
+
+    // CWE 943
+    //SINK
+    let _result: redis::RedisResult<Vec<String>> = pipeline.query(&mut con);
 }
 
 #[cfg(test)]
