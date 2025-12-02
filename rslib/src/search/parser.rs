@@ -868,8 +868,8 @@ fn validate_user_data(username: &str, password: &str) -> bool {
 }
 
 fn connect_to_mysql() -> MySqlPool {
+    //SOURCE
     let password = "password123";
-
     let builder = MySqlOptsBuilder::new()
         .ip_or_hostname(Some("localhost"))
         .user(Some("admin"))
